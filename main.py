@@ -30,6 +30,16 @@ ATTACK_COOLDOWN = 25  # 次に攻撃できるまでの時間（フレーム）
 HITSTUN_FRAMES = 12  # 攻撃を受けて動けない時間（フレーム）
 KNOCKBACK = 12  # 攻撃を受けたときに押し戻される距離
 
+'''
+防御関連の定数
+'''
+BARRIER_W = 80  # 防御判定の幅
+BARRIER_H = 40  # 防御判定の高さ
+BARRIER_FRAMES = 15  # 防御が出ている時間（フレーム）
+BARRIER_COOLDOWN = 25  # 次に防御できるまでの時間（フレーム）
+BARRIER_KNOCKBACK = 6  # バリア状態で攻撃を受けたときに押し戻される距離
+BARRIER_DAMAGE_ULTIMATE_ATTACK = 2  # 必殺技を防御したときのダメージ
+
 
 @dataclass
 class KeyConfig:
@@ -40,10 +50,26 @@ class KeyConfig:
     right: int
     jump: int
     attack: int
+    barrier_up: int  # 上防御
+    barrier_md: int  # 中防御
 
 
-P1_KEYS = KeyConfig(left=pg.K_a, right=pg.K_d, jump=pg.K_w, attack=pg.K_f)
-P2_KEYS = KeyConfig(left=pg.K_LEFT, right=pg.K_RIGHT, jump=pg.K_UP, attack=pg.K_l)
+P1_KEYS = KeyConfig(
+    left=pg.K_a,
+    right=pg.K_d,
+    jump=pg.K_w,
+    attack=pg.K_f,
+    barrier_up=pg.K_r,
+    barrier_md=pg.K_t
+    )
+P2_KEYS = KeyConfig(
+    left=pg.K_LEFT,
+    right=pg.K_RIGHT,
+    jump=pg.K_UP,
+    attack=pg.K_l,
+    barrier_up=pg.K_o,
+    barrier_md=pg.K_p
+    )
 
 
 def load_fighter_image(path: str, color: tuple[int, int, int]) -> pg.Surface:
@@ -90,8 +116,14 @@ class Fighter(pg.sprite.Sprite):
         self.rect.bottom = GROUND_Y
         self.vy = 0  # 縦方向の速度
         self.hp = MAX_HP
+
         self.attack_timer = 0  # 攻撃判定が残っているフレーム数
         self.cooldown = 0  # 次の攻撃までの待ちフレーム数
+
+        self.barrier_timer = 0  # 防御判定が残っているフレーム数
+        self.barrier_cooldown = 0  # 次の防御までの待ちフレーム数
+        self.barrier_type = ""  # "up"または"md"
+
         self.hitstun = 0  # のけぞりの残りフレーム数
         self.has_hit = False  # 今回の攻撃がすでに当たったか
 
@@ -103,7 +135,7 @@ class Fighter(pg.sprite.Sprite):
 
     def handle_input(self, key_lst: pg.key.ScancodeWrapper) -> None:
         """
-        押されているキーに応じて移動・ジャンプ・攻撃を行う
+        押されているキーに応じて移動・ジャンプ・攻撃・防御を行う
         引数 key_lst：押下キーの真理値リスト
         """
         if self.hitstun > 0:  # のけぞり中は操作できない
@@ -116,10 +148,22 @@ class Fighter(pg.sprite.Sprite):
         self.rect.x += dx
         if key_lst[self.keys.jump] and self.is_on_ground():
             self.vy = -JUMP_POWER
-        if key_lst[self.keys.attack] and self.cooldown == 0:
+
+        # 防御中は攻撃を出せないように self.barrier_timer == 0を追加
+        if key_lst[self.keys.attack] and self.cooldown == 0 and self.barrier_timer == 0:
             self.attack_timer = ATTACK_FRAMES
             self.cooldown = ATTACK_COOLDOWN
             self.has_hit = False
+
+        # 攻撃中は防御を出せないように self.attack_timer == 0を条件に設定
+        if key_lst[self.keys.barrier_up] and self.barrier_cooldown == 0 and self.attack_timer == 0:
+            self.barrier_timer = BARRIER_FRAMES
+            self.barrier_cooldown = BARRIER_COOLDOWN
+            self.barrier_type = "up"
+        elif key_lst[self.keys.barrier_md] and self.barrier_cooldown == 0 and self.attack_timer == 0:
+            self.barrier_timer = BARRIER_FRAMES
+            self.barrier_cooldown = BARRIER_COOLDOWN
+            self.barrier_type = "md"
 
     def face_to(self, other: "Fighter") -> None:
         """
@@ -143,6 +187,36 @@ class Fighter(pg.sprite.Sprite):
             atk.right = self.rect.left
         return atk
 
+    # 防御判定の矩形を取得するメソッド
+    def get_barrier_rect(self) -> pg.Rect | None:
+        """
+        防御判定の矩形を返す（防御中でなければNone）
+        """
+        if self.barrier_timer <= 0:
+            return None
+        bar = pg.Rect(0, 0, BARRIER_W, BARRIER_H)
+
+        # 上段は少し高め、中段は中央に判定を配置する
+        if self.barrier_type == "up":
+            bar.centery = self.rect.top + FIGHTER_H // 4
+        else:
+            bar.centery = self.rect.centery
+
+        if self.facing == 1:
+            bar.left = self.rect.right - FIGHTER_W
+        else:
+            bar.right = self.rect.left + FIGHTER_W
+        return bar
+
+    # ガード成功時の処理メソッド
+    def block_attack(self, from_dir: int) -> None:
+        """
+        防御成功時にノックバックする処理
+        引数 from_dir：押し戻される向き（右:+1, 左:-1）
+        """
+        self.rect.x += BARRIER_KNOCKBACK * from_dir
+        self.rect.clamp_ip(pg.Rect(0, 0, WIDTH, HEIGHT))
+
     def take_damage(self, damage: int, from_dir: int) -> None:
         """
         ダメージを受けてのけぞる
@@ -151,7 +225,8 @@ class Fighter(pg.sprite.Sprite):
         """
         self.hp = max(0, self.hp - damage)
         self.hitstun = HITSTUN_FRAMES
-        self.attack_timer = 0  # 攻撃を潰される
+        self.attack_timer = 0 # 攻撃を潰される
+        self.barrier_timer = 0 # ダメージを受けたら防御も潰される
         self.rect.x += KNOCKBACK * from_dir
         self.rect.clamp_ip(pg.Rect(0, 0, WIDTH, HEIGHT))  # 画面外に押し出されないようにする
 
@@ -167,31 +242,53 @@ class Fighter(pg.sprite.Sprite):
         self.rect.clamp_ip(pg.Rect(0, 0, WIDTH, HEIGHT))
         self.attack_timer = max(0, self.attack_timer - 1)
         self.cooldown = max(0, self.cooldown - 1)
+
+        # バリアのタイマーを追加
+        self.barrier_timer = max(0, self.barrier_timer - 1)
+        self.barrier_cooldown = max(0, self.barrier_cooldown - 1)
+
         self.hitstun = max(0, self.hitstun - 1)
 
     def draw(self, screen: pg.Surface) -> None:
         """
-        キャラと攻撃判定を描画する
+        キャラと攻撃・防御判定を描画する
         引数 screen：画面Surface
         """
         screen.blit(self.image, self.rect)
         atk = self.get_attack_rect()
         if atk is not None:
-            pg.draw.rect(screen, (255, 220, 0), atk, 3)  # 攻撃判定を可視化
+            pg.draw.rect(screen, (255, 220, 0), atk, 3)  # 攻撃判定は黄色
+
+        # 防御判定の描画
+        bar = self.get_barrier_rect()
+        if bar is not None:
+            color = (0, 200, 255) if self.barrier_type == "up" else (0, 255, 100)
+            pg.draw.rect(screen, color, bar, 3)  # 防御判定（上段:水色、中段:緑色)
 
 
 def check_hit(attacker: Fighter, defender: Fighter) -> None:
     """
-    攻撃側の攻撃が防御側に当たったか判定し、当たればダメージを与える
+    攻撃側の攻撃が防御側に当たったか判定し、処理を行う
     引数 attacker：攻撃側キャラ
     引数 defender：防御側キャラ
     """
+
     atk = attacker.get_attack_rect()
     if atk is None or attacker.has_hit:
         return
+
+    # 防御判定への衝突チェック
+    # 本体へのダメージ処理より先に判定
+    bar = defender.get_barrier_rect()
+    if bar is not None and atk.colliderect(bar):
+        defender.block_attack(attacker.facing)
+        attacker.has_hit = True
+        return
+
+    # 本体への衝突チェック
     if atk.colliderect(defender.rect):
         defender.take_damage(ATTACK_DAMAGE, attacker.facing)
-        attacker.has_hit = True  # 1回の攻撃で多段ヒットしないようにする
+        attacker.has_hit = True
 
 
 def push_apart(f1: Fighter, f2: Fighter) -> None:
