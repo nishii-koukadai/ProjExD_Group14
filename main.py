@@ -30,13 +30,11 @@ ATTACK_COOLDOWN = 25  # 次に攻撃できるまでの時間（フレーム）
 HITSTUN_FRAMES = 12  # 攻撃を受けて動けない時間（フレーム）
 KNOCKBACK = 12  # 攻撃を受けたときに押し戻される距離
 
-'''
-防御関連の定数
-'''
+# =====防御関連の定数=====
 BARRIER_W = 80  # 防御判定の幅
 BARRIER_H = 40  # 防御判定の高さ
 BARRIER_FRAMES = 15  # 防御が出ている時間（フレーム）
-BARRIER_COOLDOWN = 25  # 次に防御できるまでの時間（フレーム）
+BARRIER_COOLDOWN = 5  # 次に防御できるまでの時間（フレーム）
 BARRIER_KNOCKBACK = 6  # バリア状態で攻撃を受けたときに押し戻される距離
 BARRIER_DAMAGE_ULTIMATE_ATTACK = 2  # 必殺技を防御したときのダメージ
 
@@ -225,8 +223,8 @@ class Fighter(pg.sprite.Sprite):
         """
         self.hp = max(0, self.hp - damage)
         self.hitstun = HITSTUN_FRAMES
-        self.attack_timer = 0 # 攻撃を潰される
-        self.barrier_timer = 0 # ダメージを受けたら防御も潰される
+        self.attack_timer = 0 #  攻撃を潰される
+        self.barrier_timer = 0 #  ダメージを受けたら防御も潰される
         self.rect.x += KNOCKBACK * from_dir
         self.rect.clamp_ip(pg.Rect(0, 0, WIDTH, HEIGHT))  # 画面外に押し出されないようにする
 
